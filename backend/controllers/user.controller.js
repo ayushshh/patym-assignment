@@ -4,158 +4,201 @@ import { asyncHandler } from "express-async-handler";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 
+// --- Zod Schemas ---
 const zodSchema = z.object({
   username: z
     .string()
-    .min(3, "username should be minimum 3 character")
-    .max(50, "username maax length should be 50 characters")
+    .min(3, "Username should be a minimum of 3 characters")
+    .max(50, "Username maximum length should be 50 characters")
     .toLowerCase()
     .trim(),
   firstName: z
     .string()
-    .min(3, "should be atlezst 3 character")
-    .max(20, "maximum length should be 20 character")
+    .min(3, "First name should be at least 3 characters")
+    .max(20, "Maximum length should be 20 characters")
     .trim(),
   lastName: z
     .string()
-    .min(3, "should be atlezst 3 character")
-    .max(20, "maximum length should be 20 character")
+    .min(3, "Last name should be at least 3 characters")
+    .max(20, "Maximum length should be 20 characters")
     .trim(),
   password: z
     .string()
-    .min(6, "password length should be minimum 6 character")
-    .trim()
-    .max(30, "maximum password length should be 30"),
+    .min(6, "Password length should be a minimum of 6 characters")
+    .max(30, "Maximum password length should be 30 characters")
+    .trim(),
 });
 
 const signinZod = z.object({
   username: z
     .string()
-    .min(3, "username should be minimum 3 character")
-    .max(50, "username maax length should be 50 characters")
+    .min(3, "Username should be a minimum of 3 characters")
+    .max(50, "Username maximum length should be 50 characters")
     .toLowerCase()
     .trim(),
   password: z
     .string()
-    .min(6, "password length should be minimum 6 character")
-    .trim()
-    .max(30, "maximum password length should be 30"),
+    .min(6, "Password length should be a minimum of 6 characters")
+    .max(30, "Maximum password length should be 30 characters")
+    .trim(),
 });
 
-function jwtAuth(username) {
-  if (!username) {
-    console.log("pass the username for creation of jwt");
+const updateBody = z.object({
+  password: z.string().min(6).max(30).optional(),
+  firstName: z.string().min(3).max(20).optional(),
+  lastName: z.string().min(3).max(20).optional(),
+});
+
+// --- Helpers ---
+function jwtAuth(id) {
+  if (!id) {
+    console.error("Pass the user ID for the creation of JWT");
     return;
   }
-  const auth = jwt.sign({ username }, process.env.JWT_SECRET);
-  return auth;
+  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '30d' });
 }
 
 const cookieOptions = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === "production", // Render + Vercel are HTTPS
-  sameSite: "None", // required for cross-origin cookies
+  // secure: process.env.NODE_ENV === "production", 
+  sameSite: "None", 
   maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
 };
 
-const signUp = asyncHandler(async (req, res) => {
-  //take all details from user
-  //check for the user if the user already exist
-  //check using the zod validation
-  //check all the fiels is valid or invalid
-  //hash the password
-  //create jwt
-  const { username, firstName, lastName, password } = await req.body;
-  if (!username || firstName || lastName || password) {
-    return res.status(400).jso({
-      message: "Please fill the details",
-    });
-  }
+// --- Controllers ---
 
-  const data = zodSchema.safeParse({
-    username,
-    firstName,
-    lastName,
-    password,
-  });
-
-  if (data.success) {
-    ((username = data.data.username),
-      (firstName = data.data.firstName),
-      (lastName = data.data.lastName),
-      (password = data.data.password));
-  } else {
+export const signUp = asyncHandler(async (req, res) => {
+  // 1. Check if fields are provided
+  const { username, firstName, lastName, password } = req.body; 
+  if (!username || !firstName || !lastName || !password) {
     return res.status(400).json({
-      message: "invalid data input and change you input",
+      message: "Please fill in all details",
     });
   }
 
-  const usernameExist = await User.findOne({
-    username: username,
-  });
-  if (usernameExist) {
-    res.status(400);
-    throw new Error("User already exists");
+  // 2. Validate with Zod
+  const parsedData = zodSchema.safeParse(req.body);
+  if (!parsedData.success) {
+    return res.status(400).json({
+      message: "Invalid data input. Please check your input parameters.",
+      errors: parsedData.error.format() // Optional: helps debug what exactly failed
+    });
   }
 
-  const hashPassword = bcrypt.hash(password, 10);
+  const validData = parsedData.data;
 
+  // 3. Check for existing user
+  const usernameExist = await User.findOne({ username: validData.username });
+  if (usernameExist) {
+    return res.status(400).json({ message: "User already exists" });
+  }
+
+  // 4. Hash password (MUST use await)
+  const hashPassword = await bcrypt.hash(validData.password, 10);
+
+  // 5. Create user
   const createUser = await User.create({
-    firstName: firstName,
-    lastName: lastName,
-    username: username,
+    firstName: validData.firstName,
+    lastName: validData.lastName,
+    username: validData.username,
     password: hashPassword,
   });
 
+  // 6. Generate token and respond
   if (createUser) {
     const token = jwtAuth(createUser._id);
 
-    return res.status(200).cookies("token", token, cookieOptions).json({
-      messaage: "User created successfully",
+    return res.status(201).cookie("token", token, cookieOptions).json({
+      message: "User created successfully",
       id: createUser._id,
-      username,
-      firstName,
-      lastName,
+      username: createUser.username,
+      firstName: createUser.firstName,
+      lastName: createUser.lastName,
     });
   }
 });
 
-const signin = asyncHandler(async (req, res) => {
+export const signin = asyncHandler(async (req, res) => {
   const { username, password } = req.body;
-  if (!username | !password) {
-    return res.status(400).jso({
-      message: "Please fill the details",
-    });
-  }
-
-  const data = signinZod.safeParse({
-    username,
-    password,
-  });
-  if (data.success) {
-    ((username = data.data.username), (password = data.data.password));
-  } else {
+  
+  if (!username || !password) {
     return res.status(400).json({
-      message: "invalid data input and change you input",
+      message: "Please fill in all details",
     });
   }
 
-  const find = await User.findOne({ username });
-  if (find && bcrypt.compare(password, 10)) {
-    const token = jwtAuth(username);
+  const parsedData = signinZod.safeParse({ username, password });
+  if (!parsedData.success) {
+    return res.status(400).json({
+      message: "Invalid data input. Please check your input parameters.",
+    });
+  }
+
+  const validData = parsedData.data;
+
+  // Find user and compare password (MUST compare against DB password and use await)
+  const user = await User.findOne({ username: validData.username });
+  
+  if (user && (await bcrypt.compare(validData.password, user.password))) {
+    const token = jwtAuth(user._id); // Use ID, not username
 
     return res
       .status(200)
-      .cookies("token", token, cookieOptions)
+      .cookie("token", token, cookieOptions)
       .json({
-        messaage: `${username} login successfully!!`,
-        _id: find._id,
-        firstname: find.firstName,
-        lastname: find.lastName,
+        message: `${user.username} logged in successfully!!`,
+        _id: user._id,
+        firstname: user.firstName,
+        lastname: user.lastName,
       });
   } else {
-    return res.status(400).json({
-      message: "Something went wrong",
+    // Keep error message generic for security reasons
+    return res.status(401).json({
+      message: "Invalid username or password",
     });
   }
+});
+
+export const updateName = asyncHandler(async (req, res) => {
+  const { firstName, lastName, password } = req.body;
+
+  if (!firstName && !lastName && !password) {
+    return res.status(400).json({
+      message: "No data provided to update",
+    });
+  }
+  
+  const parsedData = updateBody.safeParse(req.body);
+
+  if (!parsedData.success) {
+     return res.status(400).json({
+       message: "Invalid data format"
+     });
+  }
+
+  // Build the update object dynamically so we only update what was passed
+  const updateFields = {};
+  if (parsedData.data.firstName) updateFields.firstName = parsedData.data.firstName;
+  if (parsedData.data.lastName) updateFields.lastName = parsedData.data.lastName;
+  
+  // Only hash and update the password if the user actually sent a new one
+  if (parsedData.data.password) {
+    updateFields.password = await bcrypt.hash(parsedData.data.password, 10);
+  }
+
+  // Note: req.user._id assumes you have an authentication middleware running before this controller
+  const updatedUser = await User.findByIdAndUpdate(
+    req.user._id,
+    { $set: updateFields },
+    { new: true }
+  ).select("-password");
+
+  if (!updatedUser) {
+    return res.status(404).json({ message: "User not found" });
+  }
+
+  return res.status(200).json({
+    message: "Details updated successfully",
+    details: updatedUser,
+  });
 });
