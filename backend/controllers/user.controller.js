@@ -1,6 +1,6 @@
 import { User } from "../db.schema.js";
 import { z } from "zod";
-import { asyncHandler } from "express-async-handler";
+import asyncHandler from "express-async-handler"
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { Account } from "../db.schema.js"
@@ -169,7 +169,7 @@ export const signin = asyncHandler(async (req, res) => {
   }
 });
 
-export const updateName = asyncHandler(async (req, res) => {
+export const update = asyncHandler(async (req, res) => {
   const { firstName, lastName, password } = req.body;
 
   if (!firstName && !lastName && !password) {
