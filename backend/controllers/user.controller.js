@@ -3,6 +3,7 @@ import { z } from "zod";
 import { asyncHandler } from "express-async-handler";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { Account } from "../db.schema.js"
 
 // --- Zod Schemas ---
 const zodSchema = z.object({
@@ -55,13 +56,13 @@ function jwtAuth(id) {
     console.error("Pass the user ID for the creation of JWT");
     return;
   }
-  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '30d' });
+  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: "30d" });
 }
 
 const cookieOptions = {
   httpOnly: true,
-  // secure: process.env.NODE_ENV === "production", 
-  sameSite: "None", 
+  // secure: process.env.NODE_ENV === "production",
+  sameSite: "None",
   maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
 };
 
@@ -69,7 +70,7 @@ const cookieOptions = {
 
 export const signUp = asyncHandler(async (req, res) => {
   // 1. Check if fields are provided
-  const { username, firstName, lastName, password } = req.body; 
+  const { username, firstName, lastName, password } = req.body;
   if (!username || !firstName || !lastName || !password) {
     return res.status(400).json({
       message: "Please fill in all details",
@@ -81,7 +82,7 @@ export const signUp = asyncHandler(async (req, res) => {
   if (!parsedData.success) {
     return res.status(400).json({
       message: "Invalid data input. Please check your input parameters.",
-      errors: parsedData.error.format() // Optional: helps debug what exactly failed
+      errors: parsedData.error.format(), // Optional: helps debug what exactly failed
     });
   }
 
@@ -104,8 +105,16 @@ export const signUp = asyncHandler(async (req, res) => {
     password: hashPassword,
   });
 
+  let acc;
+  if(createUser){
+    acc = await Account.create({
+      userId : createUser._id,
+      balance: Math.floor(Math.random()*10) * 1000
+    })
+  }
+
   // 6. Generate token and respond
-  if (createUser) {
+  if (createUser && acc) {
     const token = jwtAuth(createUser._id);
 
     return res.status(201).cookie("token", token, cookieOptions).json({
@@ -114,13 +123,14 @@ export const signUp = asyncHandler(async (req, res) => {
       username: createUser.username,
       firstName: createUser.firstName,
       lastName: createUser.lastName,
+      balance : acc.balance
     });
   }
 });
 
 export const signin = asyncHandler(async (req, res) => {
   const { username, password } = req.body;
-  
+
   if (!username || !password) {
     return res.status(400).json({
       message: "Please fill in all details",
@@ -138,7 +148,7 @@ export const signin = asyncHandler(async (req, res) => {
 
   // Find user and compare password (MUST compare against DB password and use await)
   const user = await User.findOne({ username: validData.username });
-  
+
   if (user && (await bcrypt.compare(validData.password, user.password))) {
     const token = jwtAuth(user._id); // Use ID, not username
 
@@ -167,20 +177,22 @@ export const updateName = asyncHandler(async (req, res) => {
       message: "No data provided to update",
     });
   }
-  
+
   const parsedData = updateBody.safeParse(req.body);
 
   if (!parsedData.success) {
-     return res.status(400).json({
-       message: "Invalid data format"
-     });
+    return res.status(400).json({
+      message: "Invalid data format",
+    });
   }
 
   // Build the update object dynamically so we only update what was passed
   const updateFields = {};
-  if (parsedData.data.firstName) updateFields.firstName = parsedData.data.firstName;
-  if (parsedData.data.lastName) updateFields.lastName = parsedData.data.lastName;
-  
+  if (parsedData.data.firstName)
+    updateFields.firstName = parsedData.data.firstName;
+  if (parsedData.data.lastName)
+    updateFields.lastName = parsedData.data.lastName;
+
   // Only hash and update the password if the user actually sent a new one
   if (parsedData.data.password) {
     updateFields.password = await bcrypt.hash(parsedData.data.password, 10);
@@ -190,7 +202,7 @@ export const updateName = asyncHandler(async (req, res) => {
   const updatedUser = await User.findByIdAndUpdate(
     req.user._id,
     { $set: updateFields },
-    { new: true }
+    { new: true },
   ).select("-password");
 
   if (!updatedUser) {
@@ -201,4 +213,25 @@ export const updateName = asyncHandler(async (req, res) => {
     message: "Details updated successfully",
     details: updatedUser,
   });
+});
+
+//this is for the finding the user using a simple
+const findUser = asyncHandler(async (req, res) => {
+  try {
+    const { filter } = req.query;
+    let query = {};
+    if (filter) {
+      //this is query for finding
+      query = {
+        $or: [
+          { firstName: { $regex: filter, $options: "i" } },
+          { lastName: { $regex: filter, $options: "i" } },
+        ],};}
+    const users = await User.find(query).select("firstName lastName _id");
+
+    res.status(200).json({ users });
+  } catch (error) {
+    console.error("❌ Error fetching users:", error);
+    res.status(500).json({ error: "Failed to fetch users" });
+  }
 });
